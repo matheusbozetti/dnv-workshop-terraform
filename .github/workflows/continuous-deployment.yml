@@ -1,0 +1,54 @@
+name: Continuous Deployment
+on:
+  workflow_dispatch:
+  push:
+    branches:
+    - main
+
+env:
+  BACKEND_REPOSITORY : workshop/production/backend
+  FRONTEND_REPOSITORY : workshop/production/frontend
+  IMAGE_TAG: ${{ github.sha }}
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  backend:
+    name: Deploy backend
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v6.0.0
+      with:
+        aws-region: us-east-1
+        role-to-assume: arn:aws:iam::591853006687:role/devops-na-nuvem-github-role
+      
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+    
+    - name: Build, tag, and push docker image to Amazon ECR
+      env:
+        REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+      run: |
+          docker build -f ./dvn-workshop-apps/backend/YoutubeLiveApp/Dockerfile \
+            -t $REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG \
+            ./dvn-workshop-apps/backend/YoutubeLiveApp
+          docker push $REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG
+
+    - uses: actions/checkout@v6
+      with:
+        repository: 'matheusbozetti/dnv-workshop-gitops'
+        token: ${{ secrets.PAT }}
+
+    - run: |
+          kustomize edit set image $REGISTRY/$BACKEND_REPOSITORY=$REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ./kustomization.yaml
+          git commit -m "[BOT] change image tag to $REGISTRY/$BACKEND_REPOSITORY:$IMAGE_TAG"
+          git push
